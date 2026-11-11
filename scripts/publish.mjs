@@ -18,6 +18,11 @@ export function indexDigests(manifest) {
   return (manifest.manifests ?? []).map((item) => item.digest).sort();
 }
 
+export function sourceCommitForRelease(built, existing, oldTree, newTree) {
+  if (existing && oldTree !== newTree) throw new Error("版本源码分支已存在且内容不同，禁止强制覆盖");
+  return existing ?? built;
+}
+
 export function publish() {
   const repository = process.env.GITHUB_REPOSITORY;
   if (repository !== "le-shi/litellm-zh") throw new Error("发布目标必须是 le-shi/litellm-zh");
@@ -38,11 +43,12 @@ export function publish() {
   const remote = `https://github.com/${repository}.git`;
   const branch = `refs/heads/releases/${translatedTag}`;
   const existing = run("git", ["ls-remote", remote, branch]);
+  let targetSha = sourceSha;
   if (existing) {
     run("git", ["-C", "snapshot", "fetch", "--depth=1", remote, branch]);
     const oldTree = run("git", ["-C", "snapshot", "rev-parse", "FETCH_HEAD^{tree}"]);
     const newTree = run("git", ["-C", "snapshot", "rev-parse", "HEAD^{tree}"]);
-    if (oldTree !== newTree) throw new Error("版本源码分支已存在且内容不同，禁止强制覆盖");
+    targetSha = sourceCommitForRelease(sourceSha, run("git", ["-C", "snapshot", "rev-parse", "FETCH_HEAD"]), oldTree, newTree);
   } else {
     run("git", ["-C", "snapshot", "push", remote, `HEAD:${branch}`]);
   }
@@ -72,7 +78,7 @@ export function publish() {
     `- 上游正式版：[${tag}](https://github.com/${config.upstream}/releases/tag/${tag})\n` +
     `- 上游提交：\`${provenance.upstream_sha}\`\n` +
     `- 汉化层提交：\`${provenance.overlay_sha}\`\n` +
-    `- 中文源码提交：\`${sourceSha}\`\n` +
+    `- 中文源码提交：\`${targetSha}\`\n` +
     `- 镜像：\`${image}\`\n` +
     `- 架构：linux/amd64、linux/arm64\n` +
     `- 静态文案替换：${provenance.replacements} 处；未覆盖文案见 translation-report.json。\n\n` +
@@ -91,7 +97,7 @@ export function publish() {
     if (!/release not found/i.test(error.stderr?.toString() ?? "")) throw error;
   }
   if (release && !release.isDraft) throw new Error("正式版本已存在，禁止覆盖");
-  if (!release) run("gh", ["release", "create", translatedTag, ...gh, "--target", sourceSha, "--title", `LiteLLM ${translatedTag}`, "--notes-file", "artifacts/release-notes.md", "--draft"]);
+  if (!release) run("gh", ["release", "create", translatedTag, ...gh, "--target", targetSha, "--title", `LiteLLM ${translatedTag}`, "--notes-file", "artifacts/release-notes.md", "--draft"]);
   run("gh", ["release", "upload", translatedTag, ...gh, ...assets, "artifacts/SHA256SUMS", "--clobber"]);
   run("gh", ["release", "edit", translatedTag, ...gh, "--draft=false"]);
   console.log(`发布成功：https://github.com/${repository}/releases/tag/${translatedTag}\n镜像：${image}`);
