@@ -54,6 +54,11 @@ test("没有显式提交值的原生选项不改写；中文中的替换符保�
   assert.ok(code.includes('<p>{"模型 $&"}</p>'));
 });
 
+test("组件显示参数有字符串字面量契约时保留调用值，不破坏类型或分支", () => {
+  const code = 'interface BudgetLineProps { label: "Team" | "My Spend"; }\nfunction BudgetLine(p:BudgetLineProps){return <span>{p.label}</span>}\nconst page=<BudgetLine label="Team" />;';
+  assert.equal(transform(code, "BudgetLine.tsx", { Team: "团队", "My Spend": "我的费用" }).code, code);
+});
+
 test("干净源码转换可重复执行；结构漂移、篡改和低覆盖率安全失败", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litellm-zh-test-"));
   try {

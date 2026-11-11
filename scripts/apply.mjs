@@ -83,8 +83,17 @@ export function transform(code, filename, dictionary) {
   if (source.parseDiagnostics.length) throw new Error(`上游源码无法解析：${filename}`);
   const edits = new Map();
   const missing = new Set();
+  const contractValues = new Set();
+  function collectContracts(node) {
+    if (ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal)) contractValues.add(node.literal.text);
+    if (ts.isEnumMember(node) && node.initializer && ts.isStringLiteral(node.initializer)) contractValues.add(node.initializer.text);
+    ts.forEachChild(node, collectContracts);
+  }
+  collectContracts(source);
   function replace(node, value, jsx = false) {
     const key = value.trim();
+    // 字符串字面量类型属于组件契约，保留调用参数，不为汉化扩大原有类型。
+    if (contractValues.has(key) && !ts.isJsxText(node)) return;
     const translated = lookup(key, dictionary);
     if (translated === null || translated === key) {
       if (/[A-Za-z]{3}/.test(key) && key.length < 400) missing.add(key);
