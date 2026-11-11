@@ -1,0 +1,16 @@
+{
+  "upstream": "BerriAI/litellm",
+  "tag": "v1.108.5",
+  "upstream_sha": "2a61f2114d45016bae77930903e65172cd8e762c",
+  "overlay_sha": "182c7747c72bc45a679b841147555e86ffdbd3b8",
+  "dockerfile_sha256": "d4c3044a765417b0a65a4c87c084cd4f98a2dfee2646b8e75acbf9440c0e8f69",
+  "reused_workflow": ".github/workflows/test-merge-smoke.yml",
+  "reused_workflow_sha256": "3b0915eccd3a4ee19476d49165f12961e0c051bfcc7c770880d1a3cb2374611f",
+  "reused_ui_command": "docker build --target ui-builder -f Dockerfile .",
+  "build_recipe": "Dockerfile",
+  "dictionary_sha256": "3f1be2876a15b02f4a19ad6c8304e11cc8de5c376b3055574252cbf2297caac7",
+  "image": "ghcr.io/le-shi/litellm:v1.108.5-zh",
+  "language": "zh-CN",
+  "replacements": 8676,
+  "changed_files": 702
+}
