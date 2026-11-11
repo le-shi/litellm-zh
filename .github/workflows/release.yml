@@ -1,0 +1,221 @@
+name: 同步正式版并发布中文镜像
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "留空发现最新正式版；或指定 >= v1.108.0 的 vX.Y.Z"
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: litellm-zh-release
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: 筛选上游正式 Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      tag: ${{ steps.plan.outputs.tag }}
+      translated_tag: ${{ steps.plan.outputs.translated_tag }}
+      upstream_sha: ${{ steps.plan.outputs.upstream_sha }}
+      image: ${{ steps.plan.outputs.image }}
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.upstream_tag }}
+        run: node scripts/release.mjs discover
+
+  prepare:
+    name: 同步源码、汉化并检查
+    needs: discover
+    if: needs.discover.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: 按不可变 SHA 同步上游
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          repository: BerriAI/litellm
+          ref: ${{ needs.discover.outputs.upstream_sha }}
+          path: source
+          persist-credentials: false
+      - name: 保存原始源码并应用独立汉化层
+        env:
+          UPSTREAM_TAG: ${{ needs.discover.outputs.tag }}
+          UPSTREAM_SHA: ${{ needs.discover.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          mkdir artifacts
+          git -C source archive --format=tar.gz --output="$GITHUB_WORKSPACE/artifacts/upstream-source.tar.gz" HEAD
+          node scripts/release.mjs prepare source
+          cp source/.litellm-zh.json artifacts/translation-report.json
+          cp source/.zh/provenance.json artifacts/provenance.json
+      - name: 安装上游锁定的前端依赖
+        working-directory: source/ui/litellm-dashboard
+        run: npm ci --no-audit --no-fund
+      - name: 前端类型检查
+        working-directory: source/ui/litellm-dashboard
+        run: npm run typecheck
+      - name: 生成可审计源码快照
+        env:
+          GIT_AUTHOR_NAME: le-shi
+          GIT_AUTHOR_EMAIL: 13051960278@163.com
+          GIT_COMMITTER_NAME: le-shi
+          GIT_COMMITTER_EMAIL: 13051960278@163.com
+          UPSTREAM_TAG: ${{ needs.discover.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git -C source add -- ui/litellm-dashboard/src .litellm-zh.json .zh .github/workflows
+          tree=$(git -C source write-tree)
+          commit=$(git -C source commit-tree "$tree" -m "feat: 同步并汉化 LiteLLM ${UPSTREAM_TAG}")
+          git -C source update-ref refs/heads/zh-source "$commit"
+          git -C source archive --format=tar.gz --output="$GITHUB_WORKSPACE/artifacts/translated-source.tar.gz" "$commit"
+          git -C source bundle create "$GITHUB_WORKSPACE/artifacts/source.bundle" refs/heads/zh-source
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: translated-source
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+
+  build:
+    name: 构建 ${{ matrix.arch }} 镜像
+    needs: [discover, prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: translated-source
+          path: artifacts
+      - name: 解包已通过检查的源码
+        run: |
+          set -euo pipefail
+          mkdir source
+          tar -xzf artifacts/translated-source.tar.gz -C source
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: 复用上游原始 Dockerfile 构建
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: source
+          file: source/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=ghcr.io/le-shi/litellm,push-by-digest=true,name-canonical=true,push=true
+          build-args: LITELLM_RELEASE_TAG=${{ needs.discover.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/le-shi/litellm-zh
+            org.opencontainers.image.version=${{ needs.discover.outputs.translated_tag }}
+            org.opencontainers.image.revision=${{ needs.discover.outputs.upstream_sha }}
+            io.litellm.zh.overlay.revision=${{ github.sha }}
+          cache-from: type=gha,scope=litellm-zh-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=litellm-zh-${{ matrix.arch }}
+          provenance: mode=max
+          sbom: true
+      - name: 验证镜像内版本与中文静态页面
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+          EXPECTED_VERSION: ${{ needs.discover.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --entrypoint /app/.venv/bin/python3 \
+            -e LITELLM_LOCAL_MODEL_COST_MAP=True -e EXPECTED_VERSION \
+            "ghcr.io/le-shi/litellm@${DIGEST}" -c '
+          import importlib.metadata, os, pathlib, litellm
+          actual = importlib.metadata.version("litellm")
+          assert actual == os.environ["EXPECTED_VERSION"].removeprefix("v"), actual
+          ui = pathlib.Path(litellm.__file__).parent / "proxy/_experimental/out"
+          assert any("lang=\"zh-CN\"" in p.read_text() for p in ui.glob("*.html")), "missing Chinese HTML"
+          assert any("模型" in p.read_text() for p in ui.rglob("*.js")), "missing Chinese bundle"
+          print("镜像版本、HTML 语言和中文包检查通过")'
+          mkdir -p digests
+          printf '%s\n' "$DIGEST" > "digests/${{ matrix.arch }}.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: 发布多架构镜像和对应 Release
+    needs: [discover, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: translated-source
+          path: artifacts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: digests
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: 发布经过验证的镜像索引及不可变源码
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.discover.outputs.tag }}
+          UPSTREAM_SHA: ${{ needs.discover.outputs.upstream_sha }}
+        run: node scripts/publish.mjs

@@ -1,0 +1,10 @@
+本项目不是 BerriAI 官方发行版，也不代表 BerriAI。
+
+上游：BerriAI/litellm，https://github.com/BerriAI/litellm
+初始词库：le-shi 的 LiteLLM 中文界面贡献 #48257
+来源提交：8a4c031102b038c9e724d6c6baa37e6a307c1dec
+来源路径：ui/litellm-dashboard/src/i18n/zh-CN.json 及 messages/*.zh-CN.json
+
+上游 LICENSE 的版权和许可证声明在同步源码中原样保留。
+enterprise/ 及其他具有独立许可证的上游内容不因中文层而改为 MIT。
+中文层不绕过许可证检查、访问控制或功能授权。

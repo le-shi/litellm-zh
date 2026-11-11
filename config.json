@@ -1,0 +1,9 @@
+{
+  "upstream": "BerriAI/litellm",
+  "minimum_version": "1.108.0",
+  "image": "ghcr.io/le-shi/litellm",
+  "language": "zh-CN",
+  "minimum_replacements": 100,
+  "platforms": ["linux/amd64", "linux/arm64"],
+  "scope": "固定中文显示层；不修改认证、授权、接口、业务值、后端或上游 Dockerfile"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "litellm-zh-overlay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LiteLLM 正式版的可重复中文转换与镜像发布层",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "apply": "node scripts/apply.mjs",
+    "discover": "node scripts/release.mjs discover",
+    "prepare": "node scripts/release.mjs prepare"
+  },
+  "engines": { "node": ">=24" },
+  "dependencies": { "typescript": "5.9.3" }
+}
