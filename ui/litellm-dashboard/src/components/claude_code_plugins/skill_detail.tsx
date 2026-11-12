@@ -1,0 +1,310 @@
+import React, { useState } from "react";
+import { ArrowLeft, Check, Copy, Link2 } from "lucide-react";
+import { useClaudeCodeMarketplaceRequiresKey } from "@/app/(dashboard)/hooks/claudeCodeMarketplace/useClaudeCodeMarketplaceRequiresKey";
+import { cn } from "@/lib/cva.config";
+import {
+  buildMarketplaceSettingsSnippet,
+  formatInstallCommand,
+  getSourceDisplayText,
+  getSourceLink,
+  MARKETPLACE_KEY_PLACEHOLDER,
+} from "./helpers";
+import { Plugin } from "./types";
+
+const SkillSource: React.FC<{ source: Plugin["source"] }> = ({ source }) => {
+  const link = getSourceLink(source);
+  const href = link && source.source === "git-subdir" && source.path ? `${link}/tree/main/${source.path}` : link;
+  if (href) {
+    return (
+      <div className="mb-6">
+        <div className="mb-1 text-xs text-muted-foreground">{"来源"}</div>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 break-all text-[13px] text-info"
+        >
+          {href.replace("https://", "")}
+          <Link2 className="size-3 shrink-0" />
+        </a>
+      </div>
+    );
+  }
+  if (!source.url) {
+    return null;
+  }
+  return (
+    <div className="mb-6">
+      <div className="mb-1 text-xs text-muted-foreground">{"来源"}</div>
+      <div className="break-all text-[13px] text-foreground">{getSourceDisplayText(source)}</div>
+    </div>
+  );
+};
+
+interface SkillDetailProps {
+  skill: Plugin;
+  onBack: () => void;
+  isAdmin?: boolean;
+  accessToken?: string | null;
+  onPublishClick?: () => void;
+}
+
+const SkillDetail: React.FC<SkillDetailProps> = ({ skill, onBack }) => {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const marketplaceRequiresKey = useClaudeCodeMarketplaceRequiresKey();
+
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  const installCommand = formatInstallCommand(skill);
+
+  const settingsSnippet = buildMarketplaceSettingsSnippet(
+    typeof window !== "undefined" ? window.location.origin : "<proxy-url>",
+    marketplaceRequiresKey,
+  );
+
+  const detailRows = [
+    ...(skill.category ? [{ property: "Category", value: skill.category }] : []),
+    ...(skill.domain ? [{ property: "Domain", value: skill.domain }] : []),
+    ...(skill.namespace ? [{ property: "Namespace", value: skill.namespace }] : []),
+    ...(skill.version ? [{ property: "Version", value: skill.version }] : []),
+    ...(skill.author?.name ? [{ property: "Author", value: skill.author.name }] : []),
+    ...(skill.created_at ? [{ property: "Added", value: new Date(skill.created_at).toLocaleDateString() }] : []),
+  ];
+
+  const tabs = [
+    { key: "overview", label: "概览" },
+    { key: "usage", label: "使用方法" },
+  ];
+
+  return (
+    <div className="py-6 pl-0 pr-8">
+      {/* Back link */}
+      <div
+        onClick={onBack}
+        className="mb-6 inline-flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground"
+      >
+        <ArrowLeft className="size-3" />
+        <span>{"技能"}</span>
+      </div>
+
+      {/* Header */}
+      <div className="mb-2">
+        <h1 className="m-0 text-[28px] font-normal leading-tight text-foreground">{skill.name}</h1>
+        {skill.description && (
+          <p className="mb-0 ml-0 mr-0 mt-2 text-sm leading-relaxed text-muted-foreground">{skill.description}</p>
+        )}
+      </div>
+
+      {/* Tab bar */}
+      <div className="mb-7 mt-6 border-b border-border">
+        <div className="flex">
+          {tabs.map((tab) => (
+            <div
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={cn(
+                "-mb-px cursor-pointer border-b-[3px] px-5 py-3 text-sm",
+                activeTab === tab.key
+                  ? "border-info font-medium text-info"
+                  : "border-transparent font-normal text-muted-foreground",
+              )}
+            >
+              {tab.label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Overview tab */}
+      {activeTab === "overview" && (
+        <div className="flex gap-16">
+          {/* Left column */}
+          <div className="min-w-0 flex-1">
+            <h2 className="m-0 mb-1 text-lg font-normal text-foreground">{"技能详情"}</h2>
+            <p className="m-0 mb-4 text-[13px] text-muted-foreground">{"此技能注册的元数据"}</p>
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="w-40 py-3 text-left font-medium text-muted-foreground">{"属性"}</th>
+                  <th className="py-3 text-left font-medium text-muted-foreground">{skill.name}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detailRows.map((row, i) => (
+                  <tr key={i} className="border-b border-border">
+                    <td className="py-3 text-foreground">{row.property}</td>
+                    <td className="py-3 text-foreground">{row.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Right sidebar */}
+          <div className="w-60 shrink-0">
+            <div className="mb-6">
+              <div className="mb-1 text-xs text-muted-foreground">{"状态"}</div>
+              <span
+                className={cn(
+                  "rounded-xl px-2.5 py-[3px] text-xs font-medium",
+                  skill.enabled ? "bg-success/10 text-success" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {skill.enabled ? "公开" : "草稿"}
+              </span>
+            </div>
+
+            <SkillSource source={skill.source} />
+
+            {skill.keywords && skill.keywords.length > 0 && (
+              <div className="mb-6">
+                <div className="mb-2 text-xs text-muted-foreground">{"标签"}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {skill.keywords.map((kw) => (
+                    <span
+                      key={kw}
+                      className="rounded-2xl border border-border bg-card px-3 py-1 text-xs text-foreground"
+                    >
+                      {kw}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="mb-1 text-xs text-muted-foreground">{"技能 ID"}</div>
+              <div className="break-all font-mono text-xs text-foreground">{skill.id}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* How to Use tab */}
+      {activeTab === "usage" && (
+        <div className="max-w-[640px]">
+          <h2 className="m-0 mb-2 text-lg font-normal text-foreground">{"使用此技能"}</h2>
+          <p className="m-0 mb-6 text-sm leading-relaxed text-muted-foreground">{"代理配置为市场后，可在 Claude Code 中用一条命令启用此技能："}</p>
+
+          {/* Install command */}
+          <div className="mb-6 overflow-hidden rounded-lg border border-border">
+            <div className="flex items-center justify-between border-b border-border bg-muted px-4 py-2.5">
+              <span className="text-[13px] font-medium text-foreground">{"在 Claude Code 中运行"}</span>
+              <button
+                onClick={() => copyToClipboard(installCommand, "install")}
+                className={cn(
+                  "flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs",
+                  copiedKey === "install" ? "text-success" : "text-info",
+                )}
+              >
+                {copiedKey === "install" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                {copiedKey === "install" ? "已复制" : "复制"}
+              </button>
+            </div>
+            <pre className="m-0 bg-card px-4 py-3.5 font-mono text-sm text-foreground">{installCommand}</pre>
+          </div>
+
+          {/* Shown when the marketplace catalog is stale and the plugin isn't found yet */}
+          <div className="mb-4 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
+            <p className="m-0 mb-2 text-[13px] leading-relaxed text-muted-foreground">
+              If you see &quot;Plugin {skill.name} not found in marketplace&quot;, update the catalog first:
+            </p>
+            <pre className="m-0 bg-transparent font-mono text-[13px] text-foreground">
+              /plugin marketplace update litellm
+            </pre>
+          </div>
+
+          <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
+            Don&apos;t have the marketplace configured yet?{" "}
+            <span onClick={() => setActiveTab("setup")} className="cursor-pointer text-info">{"查看一次性设置"}</span>
+          </p>
+        </div>
+      )}
+
+      {/* Setup tab (linked from usage) */}
+      {activeTab === "setup" && (
+        <div className="max-w-[640px]">
+          <h2 className="m-0 mb-2 text-lg font-normal text-foreground">{"一次性市场设置"}</h2>
+
+          {marketplaceRequiresKey ? (
+            <>
+              <div className="mb-4 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
+                <p className="m-0 mb-2 text-[13px] leading-relaxed text-muted-foreground">
+                  If you added this marketplace before without a key, remove it first in Claude Code. Removing it also
+                  uninstalls the plugins you installed from it, so install them again from /plugin after you add the
+                  snippet:
+                </p>
+                <pre className="m-0 bg-transparent font-mono text-[13px] text-foreground">
+                  /plugin marketplace remove litellm
+                </pre>
+              </div>
+              <p className="m-0 mb-3 text-sm leading-relaxed text-muted-foreground">
+                This proxy requires a LiteLLM key to read the marketplace. Add this to{" "}
+                <code className="rounded bg-muted px-1.5 py-px text-[13px]">~/.claude/settings.json</code> and replace{" "}
+                <code className="rounded bg-muted px-1.5 py-px text-[13px]">{MARKETPLACE_KEY_PLACEHOLDER}</code> with
+                your key:
+              </p>
+            </>
+          ) : (
+            <>
+              {/* Option 1: single command — fastest path for most users */}
+              <p className="m-0 mb-3 text-sm leading-relaxed text-muted-foreground">{"在 Claude Code 中运行此命令以注册市场："}</p>
+              <div className="mb-6 overflow-hidden rounded-lg border border-border">
+                <div className="flex items-center justify-between border-b border-border bg-muted px-4 py-2.5">
+                  <span className="text-[13px] font-medium text-foreground">{"在 Claude Code 中运行"}</span>
+                  <button
+                    onClick={() => {
+                      const origin = typeof window !== "undefined" ? window.location.origin : "";
+                      copyToClipboard(
+                        `/plugin marketplace add ${origin}/claude-code/marketplace.json`,
+                        "marketplace-cmd",
+                      );
+                    }}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs",
+                      copiedKey === "marketplace-cmd" ? "text-success" : "text-info",
+                    )}
+                  >
+                    {copiedKey === "marketplace-cmd" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                    {copiedKey === "marketplace-cmd" ? "已复制" : "复制"}
+                  </button>
+                </div>
+                <pre className="m-0 bg-card px-4 py-3.5 font-mono text-[13px] text-foreground">
+                  {`/plugin marketplace add ${typeof window !== "undefined" ? window.location.origin : "<proxy-url>"}/claude-code/marketplace.json`}
+                </pre>
+              </div>
+
+              {/* Option 2: settings.json — for persistent config or managed deployments.
+                  extraKnownMarketplaces requires source to be a nested object, not a flat string. */}
+              <p className="m-0 mb-3 text-sm leading-relaxed text-muted-foreground">{"或添加至"}{" "}
+                <code className="rounded bg-muted px-1.5 py-px text-[13px]">~/.claude/settings.json</code>{" 以持久保存配置："}</p>
+            </>
+          )}
+          <div className="overflow-hidden rounded-lg border border-border">
+            <div className="flex items-center justify-between border-b border-border bg-muted px-4 py-2.5">
+              <span className="text-[13px] font-medium text-foreground">~/.claude/settings.json</span>
+              <button
+                onClick={() => copyToClipboard(settingsSnippet, "settings")}
+                className={cn(
+                  "flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs",
+                  copiedKey === "settings" ? "text-success" : "text-info",
+                )}
+              >
+                {copiedKey === "settings" ? <Check className="size-3" /> : <Copy className="size-3" />}
+                {copiedKey === "settings" ? "已复制" : "复制"}
+              </button>
+            </div>
+            <pre className="m-0 bg-card px-4 py-3.5 font-mono text-[13px] text-foreground">{settingsSnippet}</pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SkillDetail;
