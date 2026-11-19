@@ -19,9 +19,14 @@ export function lookup(message, dictionary) {
   const key = message.replace(/\{\{(\w+)\}\}/g, "{$1}");
   const translated = dictionary[key];
   if (typeof translated !== "string") return null;
-  const placeholders = (text) => [...text.matchAll(/\{\{?(\w+)\}?\}/g)].map((m) => m[1]).sort();
-  if (JSON.stringify(placeholders(key)) !== JSON.stringify(placeholders(translated))) return null;
-  return message.includes("{{") ? translated.replace(/\{(\w+)\}/g, "{{$1}}") : translated;
+  const markers = (text) => ({
+    placeholders: [...text.matchAll(/\{\{([^}]+)\}\}|\{(\w+)\}/g)].map((m) => m[1] ?? m[2]).sort(),
+    tags: [...text.matchAll(/<\/?[\w-]+[^>]*>/g)].map((m) => m[0]).sort(),
+    references: [...text.matchAll(/\$t\(([^)]+)\)/g)].map((m) => m[1]).sort(),
+  });
+  if (JSON.stringify(markers(key)) !== JSON.stringify(markers(translated))) return null;
+  // 仅转换单括号占位符，已符合 i18next 协议的双括号不能再次扩展。
+  return message.includes("{{") ? translated.replace(/(?<!\{)\{(\w+)\}(?!\})/g, "{{$1}}") : translated;
 }
 
 function jsxText(text) {
@@ -37,6 +42,8 @@ function jsxText(text) {
 
 function protectedContent(node) {
   for (let parent = node.parent; parent; parent = parent.parent) {
+    // 富文本组件插槽可承载 API 字段名，由原生词库决定如何嵌入，不能单独猜译。
+    if (ts.isJsxAttribute(parent) && parent.name.getText() === "components") return true;
     if (ts.isJsxElement(parent)) {
       const opening = parent.openingElement;
       const tag = opening.tagName.getText();
@@ -60,20 +67,6 @@ function displayExpression(node) {
     else if (ts.isJsxExpression(parent)) {
       return !parent.parent || !ts.isJsxAttribute(parent.parent) || displayAttributes.has(parent.parent.name.getText());
     } else return false;
-  }
-  return false;
-}
-
-function presentationProperty(node) {
-  const parent = node.parent;
-  if (!ts.isPropertyAssignment(parent) || parent.initializer !== node) return false;
-  if (!["label", "header", "title", "description"].includes(parent.name.getText().replace(/["']/g, ""))) return false;
-  // 只允许导航、表列、页签等本地显示配置，禁止翻译任意请求对象里的同名字段。
-  for (let cursor = parent.parent; cursor; cursor = cursor.parent) {
-    if (ts.isCallExpression(cursor)) return false;
-    if (ts.isVariableDeclaration(cursor) || ts.isFunctionDeclaration(cursor)) {
-      return /(?:nav|menu|column|tab|option|item|field|section)/i.test(cursor.name?.getText() ?? "");
-    }
   }
   return false;
 }
@@ -109,7 +102,8 @@ export function transform(code, filename, dictionary) {
     else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       const parent = node.parent;
       if (ts.isJsxAttribute(parent) && displayAttributes.has(parent.name.getText())) replace(node, node.text, true);
-      else if (displayExpression(node) || presentationProperty(node)) replace(node, node.text);
+      // 普通对象可能随后用于请求，不能仅凭变量名或字段名推断它只用于显示。
+      else if (displayExpression(node)) replace(node, node.text);
       else if (ts.isCallExpression(parent) && parent.arguments[0] === node && ts.isPropertyAccessExpression(parent.expression)) {
         const receiver = parent.expression.expression.getText();
         if (["toast", "message", "notification"].includes(receiver) && notificationMethods.has(parent.expression.name.text)) replace(node, node.text);
@@ -137,6 +131,12 @@ export function localizeTree(value, dictionary, prefix = "", missing = []) {
   return value;
 }
 
+function countTranslations(original, localized) {
+  if (typeof original === "string") return original !== localized ? 1 : 0;
+  if (!original || typeof original !== "object") return 0;
+  return Object.entries(original).reduce((count, [key, value]) => count + countTranslations(value, localized[key]), 0);
+}
+
 export function applyOverlay(root, dictionary, minimum = 100) {
   const src = path.join(root, "ui/litellm-dashboard/src");
   const marker = path.join(root, ".litellm-zh.json");
@@ -146,6 +146,7 @@ export function applyOverlay(root, dictionary, minimum = 100) {
     if (previous.fingerprint !== fingerprint || previous.files.some((item) => hash(fs.readFileSync(path.join(root, item.path))) !== item.sha256)) {
       throw new Error("转换标记或文件已变化，请使用干净的上游版本重新转换，禁止叠加不同汉化层");
     }
+    if (previous.replacements < minimum) throw new Error(`仅命中 ${previous.replacements} 处文案，低于门槛 ${minimum}，停止发布`);
     return previous;
   }
   const layoutPath = path.join(src, "app/layout.tsx");
@@ -154,7 +155,8 @@ export function applyOverlay(root, dictionary, minimum = 100) {
   const pending = new Map();
   const files = [];
   const missing = [];
-  let replacements = 0;
+  let staticReplacements = 0;
+  let nativeReplacements = 0;
   function walk(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const absolute = path.join(directory, entry.name);
@@ -164,7 +166,7 @@ export function applyOverlay(root, dictionary, minimum = 100) {
       const relative = path.relative(root, absolute).split(path.sep).join("/");
       const original = fs.readFileSync(absolute, "utf8");
       const result = transform(original, relative, dictionary);
-      replacements += result.replacements;
+      staticReplacements += result.replacements;
       if (result.code !== original) pending.set(absolute, result.code);
       if (result.missing.length) missing.push({ path: relative, messages: result.missing });
     }
@@ -174,9 +176,13 @@ export function applyOverlay(root, dictionary, minimum = 100) {
   const nativeMissing = [];
   if (fs.existsSync(nativeLocale)) {
     // 固定中文版沿用上游词库键和插值协议，不添加第二套运行时框架或依赖。
-    const localized = localizeTree(JSON.parse(fs.readFileSync(nativeLocale, "utf8")), dictionary, "", nativeMissing);
+    const original = JSON.parse(fs.readFileSync(nativeLocale, "utf8"));
+    const localized = localizeTree(original, dictionary, "", nativeMissing);
+    nativeReplacements = countTranslations(original, localized);
     pending.set(nativeLocale, JSON.stringify(localized, null, 2) + "\n");
   }
+  // 已迁入 i18next 的静态文案同样计入覆盖率，不能只计算残留的 JSX 文本。
+  const replacements = staticReplacements + nativeReplacements;
   if (replacements < minimum) throw new Error(`仅命中 ${replacements} 处文案，低于门槛 ${minimum}，停止发布`);
   pending.set(layoutPath, (pending.get(layoutPath) ?? layout).replace(/(<html\s[^>]*lang=)"en"/, '$1"zh-CN"'));
   // 所有前置检查通过后才写入；构建配方、锁文件、后端和业务目录保持不变。
@@ -184,7 +190,7 @@ export function applyOverlay(root, dictionary, minimum = 100) {
     fs.writeFileSync(absolute, content);
     files.push({ path: path.relative(root, absolute).split(path.sep).join("/"), sha256: hash(content) });
   }
-  const report = { language: "zh-CN", fingerprint, replacements, files, missing, nativeMissing };
+  const report = { language: "zh-CN", fingerprint, replacements, staticReplacements, nativeReplacements, files, missing, nativeMissing };
   fs.writeFileSync(marker, JSON.stringify(report, null, 2) + "\n");
   return report;
 }

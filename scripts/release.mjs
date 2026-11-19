@@ -127,7 +127,8 @@ export function prepare(root, tag) {
     reused_ui_command: "docker build --target ui-builder -f Dockerfile .",
     build_recipe: "Dockerfile", dictionary_sha256: sha256(dictionaryBytes),
     image: `${config.image}:${tag}-zh`, language: config.language,
-    replacements: report.replacements, changed_files: report.files.length,
+    replacements: report.replacements, static_replacements: report.staticReplacements,
+    native_replacements: report.nativeReplacements, changed_files: report.files.length,
   };
   fs.mkdirSync(path.join(root, ".zh"));
   fs.writeFileSync(path.join(root, ".zh/provenance.json"), JSON.stringify(provenance, null, 2) + "\n");

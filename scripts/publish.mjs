@@ -81,7 +81,7 @@ export function publish() {
     `- 中文源码提交：\`${targetSha}\`\n` +
     `- 镜像：\`${image}\`\n` +
     `- 架构：linux/amd64、linux/arm64\n` +
-    `- 静态文案替换：${provenance.replacements} 处；未覆盖文案见 translation-report.json。\n\n` +
+    `- 文案替换：共 ${provenance.replacements} 处，源码 ${provenance.static_replacements} 处，原生词库 ${provenance.native_replacements} 处。未覆盖文案见 translation-report.json。\n\n` +
     `固定中文版；不改写用户数据、接口字段、权限或模型调用逻辑。复用上游原始 Dockerfile、锁文件和 UI 构建方式。\n\n` +
     `附件包含原始上游源码、汉化源码、溯源信息和翻译报告。升级与数据库迁移要求仍以对应上游正式版为准。\n`;
   fs.writeFileSync("artifacts/release-notes.md", notes);
